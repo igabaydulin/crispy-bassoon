@@ -1,5 +1,7 @@
 package dev.igabaydulin.scala.concurrent.map
 
+import MyBenchmark.{Maps, Values}
+
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
 
@@ -7,76 +9,116 @@ import java.util.UUID
 import java.util.UUID.randomUUID
 import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 import scala.collection.concurrent
-import scala.collection.concurrent.TrieMap
 import scala.jdk.CollectionConverters._
-import scala.util.Random
 
-@Threads(Threads.MAX)
+@Threads(12)
 @BenchmarkMode(Array(Mode.Throughput))
-@OutputTimeUnit(TimeUnit.SECONDS)
-@Fork(value = 10)
-@Warmup(iterations = 10)
-@State(Scope.Benchmark)
+@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@Fork(value = 5)
+@Warmup(iterations = 5)
 class MyBenchmark {
 
-  private final val NUMBER_OF_TOTAL_KEYS = 1
-  private final val NUMBER_OF_DUPLICATED_KEYS = 100
-  private final val NUMBER_OF_UNIQUE_KEYS = 0
-  private final val OPS = NUMBER_OF_DUPLICATED_KEYS + NUMBER_OF_UNIQUE_KEYS
+  /** Benchmarks when key exists in map and is updated with new value */
 
-  var keys: List[UUID] = List.empty
-  var duplicatedKeys: List[(UUID, UUID)] = List.empty
-  var uniqueKeys: List[(UUID, UUID)] = List.empty
-  var keysToPut: List[(UUID, UUID)] = List.empty
-
-  val javaConcurrentHashMap: ConcurrentHashMap[UUID, UUID] = new ConcurrentHashMap[UUID, UUID]()
-  val scalaConcurrentHashMap: concurrent.Map[UUID, UUID] = new ConcurrentHashMap[UUID, UUID]().asScala
-  val trieMap: concurrent.Map[UUID, UUID] = new TrieMap[UUID, UUID]()
-  val customConcurrentHashMap: concurrent.Map[UUID, UUID] = new CustomJConcurrentMapWrapper(
-    new ConcurrentHashMap[UUID, UUID]())
-
+  @Group("scala_update")
+  @GroupThreads(6)
   @Benchmark
-  @OperationsPerInvocation(OPS)
-  def scala_trie_map_compute(blackHole: Blackhole): Unit = {
-    keysToPut.foreach(put(scalaConcurrentHashMap, blackHole))
+  def scala_update_with(maps: Maps, values: Values, blackHole: Blackhole): Unit = {
+    blackHole.consume(maps.scalaConcurrentHashMap.updateWith(maps.key) { _ => Some(values.newValue) })
   }
 
+  @Group("java_update")
+  @GroupThreads(6)
   @Benchmark
-  @OperationsPerInvocation(OPS)
-  def java_concurrent_hashmap_wrapper_compute(blackHole: Blackhole): Unit = {
-    keysToPut.foreach(
-      entry => blackHole.consume(javaConcurrentHashMap.compute(entry._1, (_, _) => entry._2)))
+  def java_update_with(maps: Maps, values: Values, blackHole: Blackhole): Unit = {
+    blackHole.consume(maps.javaConcurrentHashMap.compute(maps.key, (_, _) => values.newValue))
   }
 
+  @Group("custom_update")
+  @GroupThreads(6)
   @Benchmark
-  @OperationsPerInvocation(OPS)
-  def scala_concurrent_hashmap_wrapper_compute(blackHole: Blackhole): Unit = {
-    keysToPut.foreach(put(scalaConcurrentHashMap, blackHole))
+  def custom_update_with(maps: Maps, values: Values, blackHole: Blackhole): Unit = {
+    blackHole.consume(maps.customConcurrentHashMap.updateWith(maps.key) { _ => Some(values.newValue) })
   }
 
+  /** Benchmarks when we remove value from map and put it back in parallel */
+
+  @Group("scala_remove")
+  @GroupThreads(6)
   @Benchmark
-  @OperationsPerInvocation(OPS)
-  def custom_concurrent_hashmap_wrapper_compute(blackHole: Blackhole): Unit = {
-    keysToPut.foreach(put(customConcurrentHashMap, blackHole))
+  def scala_remove_with(maps: Maps, blackHole: Blackhole): Unit = {
+    blackHole.consume(maps.scalaConcurrentHashMap.updateWith(maps.key) { _ => None })
   }
 
-  private def put(map: concurrent.Map[UUID, UUID], blackHole: Blackhole): ((UUID, UUID)) => Unit =
-    entry => blackHole.consume(map.updateWith(entry._1) { _: Option[UUID] => Some(entry._2) })
+  @Group("scala_remove")
+  @GroupThreads(6)
+  @Benchmark
+  def scala_put(maps: Maps, values: Values, blackHole: Blackhole): Unit = {
+    blackHole.consume(maps.scalaConcurrentHashMap.put(maps.key, values.newValue))
+  }
 
-  @Setup
-  def setUp(): Unit = {
-    val random = new Random();
-    keys = List.fill(NUMBER_OF_TOTAL_KEYS)(randomUUID)
-    duplicatedKeys = 1.to(NUMBER_OF_DUPLICATED_KEYS)
-      .map(_ => (keys(random.nextInt(NUMBER_OF_TOTAL_KEYS)), randomUUID())).toList
-    uniqueKeys = List.fill(NUMBER_OF_UNIQUE_KEYS)((randomUUID(), randomUUID()))
-    keysToPut = scala.util.Random.shuffle(duplicatedKeys.concat(uniqueKeys))
+  @Group("java_remove")
+  @GroupThreads(6)
+  @Benchmark
+  def java_remove_with(maps: Maps, blackHole: Blackhole): Unit = {
+    blackHole.consume(maps.javaConcurrentHashMap.compute(maps.key, (_, _) => null))
+  }
 
-    keys.foreach(
-      (i: UUID) => {
-        scalaConcurrentHashMap.putIfAbsent(i, randomUUID())
-        customConcurrentHashMap.putIfAbsent(i, randomUUID())
-      }
-    )
+  @Group("java_remove")
+  @GroupThreads(6)
+  @Benchmark
+  def java_put(maps: Maps, values: Values, blackHole: Blackhole): Unit = {
+    blackHole.consume(maps.javaConcurrentHashMap.put(maps.key, values.newValue))
+  }
+
+  @Group("custom_remove")
+  @GroupThreads(6)
+  @Benchmark
+  def custom_remove_with(maps: Maps, blackHole: Blackhole): Unit = {
+    blackHole.consume(maps.customConcurrentHashMap.updateWith(maps.key) { _ => None })
+  }
+
+  @Group("custom_remove")
+  @GroupThreads(6)
+  @Benchmark
+  def custom_put(maps: Maps, values: Values, blackHole: Blackhole): Unit = {
+    blackHole.consume(maps.customConcurrentHashMap.put(maps.key, values.newValue))
+  }
+}
+
+object MyBenchmark {
+
+  @State(Scope.Group)
+  class Maps {
+
+    var key: UUID = _
+
+    var javaConcurrentHashMap: ConcurrentHashMap[UUID, UUID] = _
+    var scalaConcurrentHashMap: concurrent.Map[UUID, UUID] = _
+    var customConcurrentHashMap: concurrent.Map[UUID, UUID] = _
+
+    @Setup
+    def up(): Unit = {
+      key = randomUUID()
+
+      javaConcurrentHashMap = new ConcurrentHashMap[UUID, UUID]()
+      scalaConcurrentHashMap = new ConcurrentHashMap[UUID, UUID]().asScala
+      customConcurrentHashMap = new CustomJConcurrentMapWrapper(new ConcurrentHashMap[UUID, UUID]())
+
+      javaConcurrentHashMap.put(key, randomUUID())
+      scalaConcurrentHashMap.put(key, randomUUID())
+      customConcurrentHashMap.put(key, randomUUID())
+    }
+  }
+
+  @State(Scope.Thread)
+  class Values {
+
+    var newValue: UUID = _
+
+    @Setup
+    def up(): Unit = {
+      newValue = randomUUID()
+    }
   }
 }
